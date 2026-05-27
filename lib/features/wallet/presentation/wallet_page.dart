@@ -1,12 +1,26 @@
 ﻿import 'package:flutter/material.dart';
 import 'package:zappy/core/i18n/app_i18n.dart';
-import 'package:zappy/features/wallet/data/wallet_mock_data.dart';
+import 'package:zappy/features/wallet/data/repositories/wallet_repository.dart';
 import 'package:zappy/features/wallet/domain/wallet_models.dart';
+import 'package:zappy/features/wallet/domain/wallet_summary.dart';
 
-class WalletPage extends StatelessWidget {
+class WalletPage extends StatefulWidget {
   const WalletPage({super.key, required this.onLogout});
 
   final VoidCallback onLogout;
+
+  @override
+  State<WalletPage> createState() => _WalletPageState();
+}
+
+class _WalletPageState extends State<WalletPage> {
+  late final Future<WalletSummary> _summaryFuture;
+
+  @override
+  void initState() {
+    super.initState();
+    _summaryFuture = WalletRepository().fetchWalletSummary();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -36,47 +50,49 @@ class WalletPage extends StatelessWidget {
           ),
           IconButton(
             tooltip: t.logout,
-            onPressed: onLogout,
+            onPressed: widget.onLogout,
             icon: const Icon(Icons.logout),
           ),
         ],
       ),
-      body: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
-        children: [
-          _BalanceCard(
-            coins: WalletMockData.balanceCoins,
-            estimatedUsd: WalletMockData.estimatedUsd,
-            title: t.balanceNow,
-            estimatedLabel: t.estimated,
-            withdrawLabel: t.withdraw,
-            transferLabel: t.transfer,
-          ),
-          const SizedBox(height: 18),
-          _SectionTitle(
-            title: t.buyCoins,
-            actionLabel: t.seeMore,
-            onTap: () {},
-          ),
-          const SizedBox(height: 10),
-          _CoinPackages(packages: WalletMockData.packages, popularLabel: t.popular),
-          const SizedBox(height: 22),
-          _SectionTitle(
-            title: t.popularGifts,
-            actionLabel: t.catalog,
-            onTap: () {},
-          ),
-          const SizedBox(height: 10),
-          _GiftGrid(gifts: WalletMockData.gifts),
-          const SizedBox(height: 22),
-          _SectionTitle(
-            title: t.movements,
-            actionLabel: t.history,
-            onTap: () {},
-          ),
-          const SizedBox(height: 10),
-          ...WalletMockData.transactions.map(_TransactionTile.new),
-        ],
+      body: FutureBuilder<WalletSummary>(
+        future: _summaryFuture,
+        builder: (context, snapshot) {
+          if (snapshot.connectionState != ConnectionState.done) {
+            return const Center(child: CircularProgressIndicator());
+          }
+
+          final summary = snapshot.data;
+          if (summary == null) {
+            return const Center(child: Text('No data'));
+          }
+
+          return ListView(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+            children: [
+              _BalanceCard(
+                coins: summary.balanceCoins,
+                estimatedUsd: summary.estimatedUsd,
+                title: t.balanceNow,
+                estimatedLabel: t.estimated,
+                withdrawLabel: t.withdraw,
+                transferLabel: t.transfer,
+              ),
+              const SizedBox(height: 18),
+              _SectionTitle(title: t.buyCoins, actionLabel: t.seeMore, onTap: () {}),
+              const SizedBox(height: 10),
+              _CoinPackages(packages: summary.packages, popularLabel: t.popular),
+              const SizedBox(height: 22),
+              _SectionTitle(title: t.popularGifts, actionLabel: t.catalog, onTap: () {}),
+              const SizedBox(height: 10),
+              _GiftGrid(gifts: summary.gifts),
+              const SizedBox(height: 22),
+              _SectionTitle(title: t.movements, actionLabel: t.history, onTap: () {}),
+              const SizedBox(height: 10),
+              ...summary.transactions.map(_TransactionTile.new),
+            ],
+          );
+        },
       ),
     );
   }
@@ -118,11 +134,7 @@ class _BalanceCard extends StatelessWidget {
           const SizedBox(height: 8),
           Text(
             '$coins coins',
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 30,
-              fontWeight: FontWeight.bold,
-            ),
+            style: const TextStyle(color: Colors.white, fontSize: 30, fontWeight: FontWeight.bold),
           ),
           const SizedBox(height: 4),
           Text(
@@ -136,19 +148,14 @@ class _BalanceCard extends StatelessWidget {
                 child: FilledButton(
                   onPressed: () {},
                   style: FilledButton.styleFrom(backgroundColor: Colors.white),
-                  child: Text(
-                    withdrawLabel,
-                    style: const TextStyle(color: Color(0xFF0F172A)),
-                  ),
+                  child: Text(withdrawLabel, style: const TextStyle(color: Color(0xFF0F172A))),
                 ),
               ),
               const SizedBox(width: 10),
               Expanded(
                 child: OutlinedButton(
                   onPressed: () {},
-                  style: OutlinedButton.styleFrom(
-                    side: const BorderSide(color: Colors.white54),
-                  ),
+                  style: OutlinedButton.styleFrom(side: const BorderSide(color: Colors.white54)),
                   child: Text(transferLabel, style: const TextStyle(color: Colors.white)),
                 ),
               ),
@@ -219,18 +226,12 @@ class _CoinPackages extends StatelessWidget {
                       color: const Color(0xFF06B6D4),
                       borderRadius: BorderRadius.circular(999),
                     ),
-                    child: Text(
-                      popularLabel,
-                      style: const TextStyle(color: Colors.white, fontSize: 11),
-                    ),
+                    child: Text(popularLabel, style: const TextStyle(color: Colors.white, fontSize: 11)),
                   )
                 else
                   const SizedBox(height: 22),
                 const Spacer(),
-                Text(
-                  '${item.coins} coins',
-                  style: const TextStyle(fontWeight: FontWeight.w700),
-                ),
+                Text('${item.coins} coins', style: const TextStyle(fontWeight: FontWeight.w700)),
                 const SizedBox(height: 4),
                 Text('USD ${item.priceUsd.toStringAsFixed(2)}'),
               ],
@@ -272,12 +273,7 @@ class _GiftGrid extends StatelessWidget {
             children: [
               Text(item.emoji, style: const TextStyle(fontSize: 22)),
               const SizedBox(width: 10),
-              Expanded(
-                child: Text(
-                  item.name,
-                  style: const TextStyle(fontWeight: FontWeight.w600),
-                ),
-              ),
+              Expanded(child: Text(item.name, style: const TextStyle(fontWeight: FontWeight.w600))),
               Text('${item.coinCost}'),
             ],
           ),
@@ -307,10 +303,7 @@ class _TransactionTile extends StatelessWidget {
         subtitle: Text(item.dateLabel),
         trailing: Text(
           item.amountLabel,
-          style: TextStyle(
-            fontWeight: FontWeight.w700,
-            color: item.isPositive ? Colors.green : Colors.red,
-          ),
+          style: TextStyle(fontWeight: FontWeight.w700, color: item.isPositive ? Colors.green : Colors.red),
         ),
       ),
     );
