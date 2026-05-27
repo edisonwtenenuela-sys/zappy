@@ -6,7 +6,9 @@ import 'package:zappy/features/live/presentation/live_page.dart';
 import 'package:zappy/features/wallet/presentation/wallet_page.dart';
 
 class AppBottomNav extends StatefulWidget {
-  const AppBottomNav({super.key});
+  const AppBottomNav({super.key, required this.onLogout});
+
+  final VoidCallback onLogout;
 
   @override
   State<AppBottomNav> createState() => _AppBottomNavState();
@@ -15,18 +17,18 @@ class AppBottomNav extends StatefulWidget {
 class _AppBottomNavState extends State<AppBottomNav> {
   int _currentIndex = 0;
 
-  final List<Widget> _pages = const [
-    FeedPage(),
-    LivePage(),
-    ChatPage(),
-    GamesPage(),
-    WalletPage(),
-  ];
-
   @override
   Widget build(BuildContext context) {
+    final pages = [
+      const FeedPage(),
+      const LivePage(),
+      const ChatPage(),
+      const GamesPage(),
+      WalletPage(onLogout: widget.onLogout),
+    ];
+
     return Scaffold(
-      body: _pages[_currentIndex],
+      body: pages[_currentIndex],
       bottomNavigationBar: NavigationBar(
         selectedIndex: _currentIndex,
         onDestinationSelected: (index) {
