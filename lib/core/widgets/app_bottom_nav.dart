@@ -1,4 +1,5 @@
 ﻿import 'package:flutter/material.dart';
+import 'package:zappy/core/i18n/app_i18n.dart';
 import 'package:zappy/features/chat/presentation/chat_page.dart';
 import 'package:zappy/features/feed/presentation/feed_page.dart';
 import 'package:zappy/features/games/presentation/games_page.dart';
@@ -26,6 +27,7 @@ class _AppBottomNavState extends State<AppBottomNav> {
       const GamesPage(),
       WalletPage(onLogout: widget.onLogout),
     ];
+    final t = AppI18n.of(context).t;
 
     return Scaffold(
       body: pages[_currentIndex],
@@ -34,12 +36,12 @@ class _AppBottomNavState extends State<AppBottomNav> {
         onDestinationSelected: (index) {
           setState(() => _currentIndex = index);
         },
-        destinations: const [
-          NavigationDestination(icon: Icon(Icons.play_arrow), label: 'Feed'),
-          NavigationDestination(icon: Icon(Icons.live_tv), label: 'Live'),
-          NavigationDestination(icon: Icon(Icons.chat_bubble_outline), label: 'Chat'),
-          NavigationDestination(icon: Icon(Icons.videogame_asset), label: 'Games'),
-          NavigationDestination(icon: Icon(Icons.account_balance_wallet_outlined), label: 'Wallet'),
+        destinations: [
+          NavigationDestination(icon: const Icon(Icons.play_arrow), label: t.feed),
+          NavigationDestination(icon: const Icon(Icons.live_tv), label: t.live),
+          NavigationDestination(icon: const Icon(Icons.chat_bubble_outline), label: t.chat),
+          NavigationDestination(icon: const Icon(Icons.videogame_asset), label: t.games),
+          NavigationDestination(icon: const Icon(Icons.account_balance_wallet_outlined), label: t.wallet),
         ],
       ),
     );

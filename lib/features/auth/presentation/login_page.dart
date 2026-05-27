@@ -1,4 +1,5 @@
 ﻿import 'package:flutter/material.dart';
+import 'package:zappy/core/i18n/app_i18n.dart';
 
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key, required this.onLogin});
@@ -30,8 +31,10 @@ class _LoginPageState extends State<LoginPage> {
 
   @override
   Widget build(BuildContext context) {
+    final t = AppI18n.of(context).t;
+
     return Scaffold(
-      appBar: AppBar(title: const Text('Iniciar sesión')),
+      appBar: AppBar(title: Text(t.loginTitle)),
       body: Padding(
         padding: const EdgeInsets.all(20),
         child: Form(
@@ -39,14 +42,14 @@ class _LoginPageState extends State<LoginPage> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              const Text('Bienvenido a Zappy', style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
+              Text(t.welcome, style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
               const SizedBox(height: 24),
               TextFormField(
                 controller: _emailController,
-                decoration: const InputDecoration(labelText: 'Email'),
+                decoration: InputDecoration(labelText: t.email),
                 validator: (value) {
                   if (value == null || value.isEmpty || !value.contains('@')) {
-                    return 'Ingresa un email válido';
+                    return t.invalidEmail;
                   }
                   return null;
                 },
@@ -54,11 +57,11 @@ class _LoginPageState extends State<LoginPage> {
               const SizedBox(height: 12),
               TextFormField(
                 controller: _passwordController,
-                decoration: const InputDecoration(labelText: 'Contraseña'),
+                decoration: InputDecoration(labelText: t.password),
                 obscureText: true,
                 validator: (value) {
                   if (value == null || value.length < 6) {
-                    return 'Mínimo 6 caracteres';
+                    return t.invalidPassword;
                   }
                   return null;
                 },
@@ -66,12 +69,12 @@ class _LoginPageState extends State<LoginPage> {
               const SizedBox(height: 24),
               ElevatedButton(
                 onPressed: _submit,
-                child: const Text('Entrar'),
+                child: Text(t.login),
               ),
               const SizedBox(height: 12),
               OutlinedButton(
                 onPressed: _submit,
-                child: const Text('Crear cuenta (mock)'),
+                child: Text(t.registerMock),
               ),
             ],
           ),

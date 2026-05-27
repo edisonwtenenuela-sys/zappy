@@ -1,4 +1,5 @@
 ﻿import 'package:flutter/material.dart';
+import 'package:zappy/core/i18n/app_i18n.dart';
 import 'package:zappy/features/wallet/data/wallet_mock_data.dart';
 import 'package:zappy/features/wallet/domain/wallet_models.dart';
 
@@ -9,12 +10,32 @@ class WalletPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final i18n = AppI18n.of(context);
+    final t = i18n.t;
+
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Wallet'),
+        title: Text(t.wallet),
         actions: [
+          PopupMenuButton<String>(
+            tooltip: t.language,
+            onSelected: (value) async {
+              await i18n.onChangeLanguage(value);
+              if (context.mounted) {
+                final updated = AppI18n.of(context).t;
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text('${updated.languageChanged}: ${value.toUpperCase()}')),
+                );
+              }
+            },
+            itemBuilder: (context) => const [
+              PopupMenuItem(value: 'es', child: Text('Español')),
+              PopupMenuItem(value: 'en', child: Text('English')),
+            ],
+            icon: const Icon(Icons.language),
+          ),
           IconButton(
-            tooltip: 'Cerrar sesión',
+            tooltip: t.logout,
             onPressed: onLogout,
             icon: const Icon(Icons.logout),
           ),
@@ -26,27 +47,31 @@ class WalletPage extends StatelessWidget {
           _BalanceCard(
             coins: WalletMockData.balanceCoins,
             estimatedUsd: WalletMockData.estimatedUsd,
+            title: t.balanceNow,
+            estimatedLabel: t.estimated,
+            withdrawLabel: t.withdraw,
+            transferLabel: t.transfer,
           ),
           const SizedBox(height: 18),
           _SectionTitle(
-            title: 'Comprar monedas',
-            actionLabel: 'Ver más',
+            title: t.buyCoins,
+            actionLabel: t.seeMore,
             onTap: () {},
           ),
           const SizedBox(height: 10),
-          _CoinPackages(packages: WalletMockData.packages),
+          _CoinPackages(packages: WalletMockData.packages, popularLabel: t.popular),
           const SizedBox(height: 22),
           _SectionTitle(
-            title: 'Regalos populares',
-            actionLabel: 'Catálogo',
+            title: t.popularGifts,
+            actionLabel: t.catalog,
             onTap: () {},
           ),
           const SizedBox(height: 10),
           _GiftGrid(gifts: WalletMockData.gifts),
           const SizedBox(height: 22),
           _SectionTitle(
-            title: 'Movimientos',
-            actionLabel: 'Historial',
+            title: t.movements,
+            actionLabel: t.history,
             onTap: () {},
           ),
           const SizedBox(height: 10),
@@ -58,10 +83,21 @@ class WalletPage extends StatelessWidget {
 }
 
 class _BalanceCard extends StatelessWidget {
-  const _BalanceCard({required this.coins, required this.estimatedUsd});
+  const _BalanceCard({
+    required this.coins,
+    required this.estimatedUsd,
+    required this.title,
+    required this.estimatedLabel,
+    required this.withdrawLabel,
+    required this.transferLabel,
+  });
 
   final int coins;
   final double estimatedUsd;
+  final String title;
+  final String estimatedLabel;
+  final String withdrawLabel;
+  final String transferLabel;
 
   @override
   Widget build(BuildContext context) {
@@ -78,10 +114,7 @@ class _BalanceCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text(
-            'Balance actual',
-            style: TextStyle(color: Colors.white70),
-          ),
+          Text(title, style: const TextStyle(color: Colors.white70)),
           const SizedBox(height: 8),
           Text(
             '$coins coins',
@@ -93,7 +126,7 @@ class _BalanceCard extends StatelessWidget {
           ),
           const SizedBox(height: 4),
           Text(
-            'Estimado: USD ${estimatedUsd.toStringAsFixed(2)}',
+            '$estimatedLabel: USD ${estimatedUsd.toStringAsFixed(2)}',
             style: const TextStyle(color: Colors.white70),
           ),
           const SizedBox(height: 14),
@@ -103,9 +136,9 @@ class _BalanceCard extends StatelessWidget {
                 child: FilledButton(
                   onPressed: () {},
                   style: FilledButton.styleFrom(backgroundColor: Colors.white),
-                  child: const Text(
-                    'Retirar',
-                    style: TextStyle(color: Color(0xFF0F172A)),
+                  child: Text(
+                    withdrawLabel,
+                    style: const TextStyle(color: Color(0xFF0F172A)),
                   ),
                 ),
               ),
@@ -116,7 +149,7 @@ class _BalanceCard extends StatelessWidget {
                   style: OutlinedButton.styleFrom(
                     side: const BorderSide(color: Colors.white54),
                   ),
-                  child: const Text('Transferir', style: TextStyle(color: Colors.white)),
+                  child: Text(transferLabel, style: const TextStyle(color: Colors.white)),
                 ),
               ),
             ],
@@ -150,9 +183,10 @@ class _SectionTitle extends StatelessWidget {
 }
 
 class _CoinPackages extends StatelessWidget {
-  const _CoinPackages({required this.packages});
+  const _CoinPackages({required this.packages, required this.popularLabel});
 
   final List<CoinPackage> packages;
+  final String popularLabel;
 
   @override
   Widget build(BuildContext context) {
@@ -185,9 +219,9 @@ class _CoinPackages extends StatelessWidget {
                       color: const Color(0xFF06B6D4),
                       borderRadius: BorderRadius.circular(999),
                     ),
-                    child: const Text(
-                      'Popular',
-                      style: TextStyle(color: Colors.white, fontSize: 11),
+                    child: Text(
+                      popularLabel,
+                      style: const TextStyle(color: Colors.white, fontSize: 11),
                     ),
                   )
                 else
