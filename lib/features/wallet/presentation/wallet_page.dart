@@ -1,13 +1,15 @@
 ﻿import 'package:flutter/material.dart';
 import 'package:zappy/core/i18n/app_i18n.dart';
+import 'package:zappy/features/auth/domain/auth_user.dart';
 import 'package:zappy/features/wallet/data/repositories/wallet_repository.dart';
 import 'package:zappy/features/wallet/domain/wallet_models.dart';
 import 'package:zappy/features/wallet/domain/wallet_summary.dart';
 
 class WalletPage extends StatefulWidget {
-  const WalletPage({super.key, required this.onLogout});
+  const WalletPage({super.key, required this.onLogout, this.currentUser});
 
   final VoidCallback onLogout;
+  final AuthUser? currentUser;
 
   @override
   State<WalletPage> createState() => _WalletPageState();
@@ -70,6 +72,15 @@ class _WalletPageState extends State<WalletPage> {
           return ListView(
             padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
             children: [
+              if (widget.currentUser != null)
+                Card(
+                  child: ListTile(
+                    leading: const CircleAvatar(child: Icon(Icons.person)),
+                    title: Text(widget.currentUser!.name),
+                    subtitle: Text(widget.currentUser!.email),
+                  ),
+                ),
+              if (widget.currentUser != null) const SizedBox(height: 12),
               _BalanceCard(
                 coins: summary.balanceCoins,
                 estimatedUsd: summary.estimatedUsd,
@@ -99,14 +110,7 @@ class _WalletPageState extends State<WalletPage> {
 }
 
 class _BalanceCard extends StatelessWidget {
-  const _BalanceCard({
-    required this.coins,
-    required this.estimatedUsd,
-    required this.title,
-    required this.estimatedLabel,
-    required this.withdrawLabel,
-    required this.transferLabel,
-  });
+  const _BalanceCard({required this.coins, required this.estimatedUsd, required this.title, required this.estimatedLabel, required this.withdrawLabel, required this.transferLabel});
 
   final int coins;
   final double estimatedUsd;

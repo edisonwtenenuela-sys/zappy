@@ -1,5 +1,6 @@
 ﻿import 'package:flutter/material.dart';
 import 'package:zappy/core/i18n/app_i18n.dart';
+import 'package:zappy/features/auth/domain/auth_user.dart';
 import 'package:zappy/features/chat/presentation/chat_page.dart';
 import 'package:zappy/features/feed/presentation/feed_page.dart';
 import 'package:zappy/features/games/presentation/games_page.dart';
@@ -7,9 +8,10 @@ import 'package:zappy/features/live/presentation/live_page.dart';
 import 'package:zappy/features/wallet/presentation/wallet_page.dart';
 
 class AppBottomNav extends StatefulWidget {
-  const AppBottomNav({super.key, required this.onLogout});
+  const AppBottomNav({super.key, required this.onLogout, this.currentUser});
 
   final VoidCallback onLogout;
+  final AuthUser? currentUser;
 
   @override
   State<AppBottomNav> createState() => _AppBottomNavState();
@@ -25,7 +27,7 @@ class _AppBottomNavState extends State<AppBottomNav> {
       const LivePage(),
       const ChatPage(),
       const GamesPage(),
-      WalletPage(onLogout: widget.onLogout),
+      WalletPage(onLogout: widget.onLogout, currentUser: widget.currentUser),
     ];
     final t = AppI18n.of(context).t;
 
@@ -33,9 +35,7 @@ class _AppBottomNavState extends State<AppBottomNav> {
       body: pages[_currentIndex],
       bottomNavigationBar: NavigationBar(
         selectedIndex: _currentIndex,
-        onDestinationSelected: (index) {
-          setState(() => _currentIndex = index);
-        },
+        onDestinationSelected: (index) => setState(() => _currentIndex = index),
         destinations: [
           NavigationDestination(icon: const Icon(Icons.play_arrow), label: t.feed),
           NavigationDestination(icon: const Icon(Icons.live_tv), label: t.live),
