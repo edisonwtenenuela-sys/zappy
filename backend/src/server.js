@@ -1,18 +1,47 @@
-﻿const http = require('http');
+﻿const fs = require('fs');
+const path = require('path');
+const http = require('http');
 const { URL } = require('url');
 
 const PORT = process.env.PORT || 4000;
+const USERS_FILE = path.join(__dirname, '..', 'data', 'users.json');
 
-const users = [
-  {
-    id: 'u1',
-    email: 'demo@zappy.app',
-    password: '123456',
-    name: 'Demo User'
-  }
-];
-
+let users = [];
 const activeSessions = new Map();
+
+function ensureUsersFile() {
+  const defaultUsers = [
+    {
+      id: 'u1',
+      email: 'demo@zappy.app',
+      password: '123456',
+      name: 'Demo User'
+    }
+  ];
+
+  const dir = path.dirname(USERS_FILE);
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
+
+  if (!fs.existsSync(USERS_FILE)) {
+    fs.writeFileSync(USERS_FILE, JSON.stringify(defaultUsers, null, 2), 'utf8');
+  }
+}
+
+function loadUsers() {
+  ensureUsersFile();
+  const raw = fs.readFileSync(USERS_FILE, 'utf8');
+  const parsed = JSON.parse(raw);
+  if (!Array.isArray(parsed)) {
+    throw new Error('users.json must contain an array');
+  }
+  users = parsed;
+}
+
+function saveUsers() {
+  fs.writeFileSync(USERS_FILE, JSON.stringify(users, null, 2), 'utf8');
+}
 
 const feedVideos = Array.from({ length: 8 }, (_, index) => ({
   id: `v${index + 1}`,
@@ -167,6 +196,7 @@ const server = http.createServer(async (req, res) => {
       };
 
       users.push(user);
+      saveUsers();
       return sendJson(res, 201, { data: createAuthPayload(user) });
     } catch (error) {
       return sendJson(res, 400, { error: error.message });
@@ -186,7 +216,15 @@ const server = http.createServer(async (req, res) => {
   return sendJson(res, 404, { error: 'Route not found' });
 });
 
+try {
+  loadUsers();
+} catch (error) {
+  console.error('Failed to load users file:', error.message);
+  process.exit(1);
+}
+
 server.listen(PORT, () => {
   console.log(`Zappy backend running on http://localhost:${PORT}`);
   console.log('Demo login: demo@zappy.app / 123456');
+  console.log(`Users file: ${USERS_FILE}`);
 });
