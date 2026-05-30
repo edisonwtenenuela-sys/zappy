@@ -1,5 +1,6 @@
 ﻿const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const http = require('http');
 const { URL } = require('url');
 
@@ -14,6 +15,8 @@ function ensureUsersFile() {
     {
       id: 'u1',
       email: 'demo@zappy.app',
+      passwordHash: null,
+      passwordSalt: null,
       password: '123456',
       name: 'Demo User'
     }
@@ -29,6 +32,31 @@ function ensureUsersFile() {
   }
 }
 
+function hashPassword(password, salt) {
+  return crypto.scryptSync(password, salt, 64).toString('hex');
+}
+
+function normalizeUser(user) {
+  const normalized = {
+    id: user.id,
+    email: String(user.email || '').trim().toLowerCase(),
+    name: user.name,
+    passwordHash: user.passwordHash ?? null,
+    passwordSalt: user.passwordSalt ?? null,
+    password: user.password ?? null
+  };
+
+  if ((!normalized.passwordHash || !normalized.passwordSalt) && normalized.password) {
+    const salt = crypto.randomBytes(16).toString('hex');
+    const passwordHash = hashPassword(normalized.password, salt);
+    normalized.passwordSalt = salt;
+    normalized.passwordHash = passwordHash;
+    normalized.password = null;
+  }
+
+  return normalized;
+}
+
 function loadUsers() {
   ensureUsersFile();
   const raw = fs.readFileSync(USERS_FILE, 'utf8');
@@ -36,11 +64,21 @@ function loadUsers() {
   if (!Array.isArray(parsed)) {
     throw new Error('users.json must contain an array');
   }
-  users = parsed;
+
+  users = parsed.map(normalizeUser);
+  saveUsers();
 }
 
 function saveUsers() {
   fs.writeFileSync(USERS_FILE, JSON.stringify(users, null, 2), 'utf8');
+}
+
+function verifyPassword(user, plainPassword) {
+  if (!user.passwordHash || !user.passwordSalt) {
+    return false;
+  }
+  const incomingHash = hashPassword(plainPassword, user.passwordSalt);
+  return crypto.timingSafeEqual(Buffer.from(incomingHash, 'hex'), Buffer.from(user.passwordHash, 'hex'));
 }
 
 const feedVideos = Array.from({ length: 8 }, (_, index) => ({
@@ -165,7 +203,7 @@ const server = http.createServer(async (req, res) => {
       const password = String(body.password || '');
       const user = users.find((item) => item.email === email);
 
-      if (!user || user.password !== password) {
+      if (!user || !verifyPassword(user, password)) {
         return sendJson(res, 401, { error: 'Invalid credentials' });
       }
 
@@ -187,11 +225,15 @@ const server = http.createServer(async (req, res) => {
       if (users.some((item) => item.email === email)) return sendJson(res, 409, { error: 'Email already registered' });
 
       const baseName = nameInput.isNotEmpty ? nameInput : email.split('@')[0].replace(/[._-]+/g, ' ');
+      const salt = crypto.randomBytes(16).toString('hex');
+      const passwordHash = hashPassword(password, salt);
 
       const user = {
         id: `u${users.length + 1}`,
         email,
-        password,
+        passwordHash,
+        passwordSalt: salt,
+        password: null,
         name: baseName
       };
 
