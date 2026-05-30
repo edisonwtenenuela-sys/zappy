@@ -4,11 +4,108 @@ const crypto = require('crypto');
 const http = require('http');
 const { URL } = require('url');
 
+let PgPool;
+try {
+  ({ Pool: PgPool } = require('pg'));
+} catch {
+  PgPool = null;
+}
+
 const PORT = process.env.PORT || 4000;
 const USERS_FILE = path.join(__dirname, '..', 'data', 'users.json');
+const SESSION_TTL_DAYS = 7;
 
 let users = [];
-const activeSessions = new Map();
+
+const memorySessions = new Map();
+
+class SessionStore {
+  constructor() {
+    this.mode = 'memory';
+    this.pool = null;
+  }
+
+  async init() {
+    const connectionString = process.env.DATABASE_URL;
+    if (!connectionString || !PgPool) {
+      this.mode = 'memory';
+      return;
+    }
+
+    this.pool = new PgPool({ connectionString });
+
+    await this.pool.query(`
+      CREATE TABLE IF NOT EXISTS auth_sessions (
+        token TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        expires_at TIMESTAMPTZ NOT NULL
+      );
+    `);
+
+    await this.pool.query(`
+      CREATE INDEX IF NOT EXISTS idx_auth_sessions_user_id
+      ON auth_sessions (user_id);
+    `);
+
+    await this.pool.query(`
+      CREATE INDEX IF NOT EXISTS idx_auth_sessions_expires_at
+      ON auth_sessions (expires_at);
+    `);
+
+    this.mode = 'postgres';
+  }
+
+  async createSession(token, userId, expiresAt) {
+    if (this.mode === 'postgres') {
+      await this.pool.query(
+        'INSERT INTO auth_sessions(token, user_id, expires_at) VALUES ($1, $2, $3)',
+        [token, userId, expiresAt.toISOString()]
+      );
+      return;
+    }
+
+    memorySessions.set(token, {
+      userId,
+      expiresAt: expiresAt.toISOString(),
+    });
+  }
+
+  async getUserId(token) {
+    if (this.mode === 'postgres') {
+      const result = await this.pool.query(
+        'SELECT user_id FROM auth_sessions WHERE token = $1 AND expires_at > NOW() LIMIT 1',
+        [token]
+      );
+      return result.rows[0]?.user_id || null;
+    }
+
+    const session = memorySessions.get(token);
+    if (!session) return null;
+
+    if (new Date(session.expiresAt).getTime() <= Date.now()) {
+      memorySessions.delete(token);
+      return null;
+    }
+
+    return session.userId;
+  }
+
+  async cleanupExpired() {
+    if (this.mode === 'postgres') {
+      await this.pool.query('DELETE FROM auth_sessions WHERE expires_at <= NOW()');
+      return;
+    }
+
+    for (const [token, session] of memorySessions.entries()) {
+      if (new Date(session.expiresAt).getTime() <= Date.now()) {
+        memorySessions.delete(token);
+      }
+    }
+  }
+}
+
+const sessionStore = new SessionStore();
 
 function ensureUsersFile() {
   const defaultUsers = [
@@ -171,18 +268,21 @@ function userPublic(user) {
   return { id: user.id, email: user.email, name: user.name };
 }
 
-function createAuthPayload(user) {
-  const token = `zappy_token_${user.id}_${Date.now()}`;
-  activeSessions.set(token, user.id);
+async function createAuthPayload(user) {
+  const token = crypto.randomBytes(32).toString('hex');
+  const expiresAt = new Date(Date.now() + SESSION_TTL_DAYS * 24 * 60 * 60 * 1000);
+  await sessionStore.createSession(token, user.id, expiresAt);
   return { token, user: userPublic(user) };
 }
 
-function resolveUserFromToken(req) {
+async function resolveUserFromToken(req) {
   const auth = req.headers.authorization || '';
   if (!auth.startsWith('Bearer ')) return null;
+
   const token = auth.slice(7).trim();
-  const userId = activeSessions.get(token);
+  const userId = await sessionStore.getUserId(token);
   if (!userId) return null;
+
   return users.find((u) => u.id === userId) || null;
 }
 
@@ -193,7 +293,12 @@ const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://localhost:${PORT}`);
 
   if (req.method === 'GET' && url.pathname === '/health') {
-    return sendJson(res, 200, { status: 'ok', service: 'zappy-backend', time: new Date().toISOString() });
+    return sendJson(res, 200, {
+      status: 'ok',
+      service: 'zappy-backend',
+      sessionStore: sessionStore.mode,
+      time: new Date().toISOString(),
+    });
   }
 
   if (req.method === 'POST' && url.pathname === '/api/auth/login') {
@@ -207,7 +312,7 @@ const server = http.createServer(async (req, res) => {
         return sendJson(res, 401, { error: 'Invalid credentials' });
       }
 
-      return sendJson(res, 200, { data: createAuthPayload(user) });
+      return sendJson(res, 200, { data: await createAuthPayload(user) });
     } catch (error) {
       return sendJson(res, 400, { error: error.message });
     }
@@ -239,16 +344,21 @@ const server = http.createServer(async (req, res) => {
 
       users.push(user);
       saveUsers();
-      return sendJson(res, 201, { data: createAuthPayload(user) });
+
+      return sendJson(res, 201, { data: await createAuthPayload(user) });
     } catch (error) {
       return sendJson(res, 400, { error: error.message });
     }
   }
 
   if (req.method === 'GET' && url.pathname === '/api/auth/me') {
-    const user = resolveUserFromToken(req);
-    if (!user) return sendJson(res, 401, { error: 'Unauthorized' });
-    return sendJson(res, 200, { data: userPublic(user) });
+    try {
+      const user = await resolveUserFromToken(req);
+      if (!user) return sendJson(res, 401, { error: 'Unauthorized' });
+      return sendJson(res, 200, { data: userPublic(user) });
+    } catch (error) {
+      return sendJson(res, 401, { error: 'Unauthorized' });
+    }
   }
 
   if (req.method === 'GET' && url.pathname === '/api/feed') return sendJson(res, 200, { data: feedVideos });
@@ -258,15 +368,28 @@ const server = http.createServer(async (req, res) => {
   return sendJson(res, 404, { error: 'Route not found' });
 });
 
-try {
-  loadUsers();
-} catch (error) {
-  console.error('Failed to load users file:', error.message);
-  process.exit(1);
+async function start() {
+  try {
+    loadUsers();
+  } catch (error) {
+    console.error('Failed to load users file:', error.message);
+    process.exit(1);
+  }
+
+  try {
+    await sessionStore.init();
+    await sessionStore.cleanupExpired();
+  } catch (error) {
+    console.error('Failed to initialize session store:', error.message);
+    process.exit(1);
+  }
+
+  server.listen(PORT, () => {
+    console.log(`Zappy backend running on http://localhost:${PORT}`);
+    console.log('Demo login: demo@zappy.app / 123456');
+    console.log(`Users file: ${USERS_FILE}`);
+    console.log(`Session store mode: ${sessionStore.mode}`);
+  });
 }
 
-server.listen(PORT, () => {
-  console.log(`Zappy backend running on http://localhost:${PORT}`);
-  console.log('Demo login: demo@zappy.app / 123456');
-  console.log(`Users file: ${USERS_FILE}`);
-});
+start();
