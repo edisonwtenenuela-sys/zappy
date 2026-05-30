@@ -15,6 +15,7 @@ Server: `http://localhost:4000`
 - `GET /health`
 - `POST /api/auth/login`
 - `POST /api/auth/register`
+- `POST /api/auth/logout` (Bearer token)
 - `GET /api/auth/me` (Bearer token)
 - `GET /api/feed`
 - `GET /api/chat/threads`

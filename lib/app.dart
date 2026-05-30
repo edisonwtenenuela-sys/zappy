@@ -71,6 +71,15 @@ class _ZappyAppState extends State<ZappyApp> {
   }
 
   Future<void> _handleLogout() async {
+    final token = await _authLocal.getToken();
+    if (token != null && token.isNotEmpty) {
+      try {
+        await _authRepository.logout(token);
+      } catch (_) {
+        // Keep local logout regardless of network/backend state.
+      }
+    }
+
     await _authLocal.logout();
     if (mounted) {
       setState(() {

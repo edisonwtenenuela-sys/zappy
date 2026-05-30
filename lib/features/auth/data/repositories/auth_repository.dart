@@ -45,6 +45,14 @@ class AuthRepository {
     return AuthUser.fromJson(data);
   }
 
+  Future<void> logout(String token) async {
+    await _apiClient.postJson(
+      '/api/auth/logout',
+      const {},
+      headers: {'Authorization': 'Bearer $token'},
+    );
+  }
+
   AuthLoginResult _mapAuthResult(Map<String, dynamic> json) {
     final data = json['data'] as Map<String, dynamic>?;
     final token = data?['token']?.toString();

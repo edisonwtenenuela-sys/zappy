@@ -87,6 +87,17 @@ class SessionStore {
     return session.userId;
   }
 
+  async revokeSession(token) {
+    if (!token) return;
+
+    if (this.mode === 'postgres') {
+      await this.pool.query('DELETE FROM auth_sessions WHERE token = $1', [token]);
+      return;
+    }
+
+    memorySessions.delete(token);
+  }
+
   async cleanupExpired() {
     if (this.mode === 'postgres') {
       await this.pool.query('DELETE FROM auth_sessions WHERE expires_at <= NOW()');
@@ -373,6 +384,12 @@ function readJsonBody(req) {
   });
 }
 
+function extractBearerToken(req) {
+  const auth = req.headers.authorization || '';
+  if (!auth.startsWith('Bearer ')) return null;
+  return auth.slice(7).trim();
+}
+
 function userPublic(user) {
   return { id: user.id, email: user.email, name: user.name };
 }
@@ -385,10 +402,9 @@ async function createAuthPayload(user) {
 }
 
 async function resolveUserFromToken(req) {
-  const auth = req.headers.authorization || '';
-  if (!auth.startsWith('Bearer ')) return null;
+  const token = extractBearerToken(req);
+  if (!token) return null;
 
-  const token = auth.slice(7).trim();
   const userId = await sessionStore.getUserId(token);
   if (!userId) return null;
 
@@ -447,6 +463,18 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 201, { data: await createAuthPayload(user) });
     } catch (error) {
       return sendJson(res, 400, { error: error.message });
+    }
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/auth/logout') {
+    try {
+      const token = extractBearerToken(req);
+      if (token) {
+        await sessionStore.revokeSession(token);
+      }
+      return sendJson(res, 200, { data: { success: true } });
+    } catch {
+      return sendJson(res, 200, { data: { success: true } });
     }
   }
 
