@@ -17,16 +17,18 @@ class ZappyApp extends StatefulWidget {
 
 class _ZappyAppState extends State<ZappyApp> {
   final _authLocal = AuthLocalDataSource();
+  final _authRepository = AuthRepository();
   final _localeController = LocaleController();
 
   String? _languageCode;
   AuthUser? _currentUser;
+  late Future<bool> _sessionFuture;
 
   @override
   void initState() {
     super.initState();
     _loadLanguage();
-    _loadUser();
+    _sessionFuture = _restoreSession();
   }
 
   Future<void> _loadLanguage() async {
@@ -34,9 +36,23 @@ class _ZappyAppState extends State<ZappyApp> {
     if (mounted) setState(() => _languageCode = code);
   }
 
-  Future<void> _loadUser() async {
-    final user = await _authLocal.getUser();
-    if (mounted) setState(() => _currentUser = user);
+  Future<bool> _restoreSession() async {
+    final loggedIn = await _authLocal.isLoggedIn();
+    if (!loggedIn) return false;
+
+    final token = await _authLocal.getToken();
+    if (token == null || token.isEmpty) return false;
+
+    try {
+      final user = await _authRepository.me(token);
+      await _authLocal.saveSession(token: token, user: user);
+      if (mounted) setState(() => _currentUser = user);
+      return true;
+    } catch (_) {
+      await _authLocal.logout();
+      if (mounted) setState(() => _currentUser = null);
+      return false;
+    }
   }
 
   Future<void> _changeLanguage(String code) async {
@@ -49,6 +65,7 @@ class _ZappyAppState extends State<ZappyApp> {
     if (mounted) {
       setState(() {
         _currentUser = result.user;
+        _sessionFuture = Future.value(true);
       });
     }
   }
@@ -58,6 +75,7 @@ class _ZappyAppState extends State<ZappyApp> {
     if (mounted) {
       setState(() {
         _currentUser = null;
+        _sessionFuture = Future.value(false);
       });
     }
   }
@@ -80,7 +98,7 @@ class _ZappyAppState extends State<ZappyApp> {
         title: 'Zappy',
         theme: AppTheme.light,
         home: FutureBuilder<bool>(
-          future: _authLocal.isLoggedIn(),
+          future: _sessionFuture,
           builder: (context, snapshot) {
             if (snapshot.connectionState != ConnectionState.done) {
               return const Scaffold(body: Center(child: CircularProgressIndicator()));

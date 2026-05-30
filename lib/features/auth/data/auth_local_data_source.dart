@@ -22,6 +22,11 @@ class AuthLocalDataSource {
     await prefs.setBool(_isLoggedInKey, true);
   }
 
+  Future<String?> getToken() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString(_authTokenKey);
+  }
+
   Future<AuthUser?> getUser() async {
     final prefs = await SharedPreferences.getInstance();
     final raw = prefs.getString(_authUserKey);

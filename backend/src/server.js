@@ -12,6 +12,8 @@ const users = [
   }
 ];
 
+const activeSessions = new Map();
+
 const feedVideos = Array.from({ length: 8 }, (_, index) => ({
   id: `v${index + 1}`,
   creator: `@creator${index + 1}`,
@@ -84,9 +86,7 @@ function readJsonBody(req) {
     let data = '';
     req.on('data', (chunk) => {
       data += chunk;
-      if (data.length > 1e6) {
-        reject(new Error('Payload too large'));
-      }
+      if (data.length > 1e6) reject(new Error('Payload too large'));
     });
     req.on('end', () => {
       if (!data) return resolve({});
@@ -100,16 +100,23 @@ function readJsonBody(req) {
   });
 }
 
+function userPublic(user) {
+  return { id: user.id, email: user.email, name: user.name };
+}
+
 function createAuthPayload(user) {
   const token = `zappy_token_${user.id}_${Date.now()}`;
-  return {
-    token,
-    user: {
-      id: user.id,
-      email: user.email,
-      name: user.name
-    }
-  };
+  activeSessions.set(token, user.id);
+  return { token, user: userPublic(user) };
+}
+
+function resolveUserFromToken(req) {
+  const auth = req.headers.authorization || '';
+  if (!auth.startsWith('Bearer ')) return null;
+  const token = auth.slice(7).trim();
+  const userId = activeSessions.get(token);
+  if (!userId) return null;
+  return users.find((u) => u.id === userId) || null;
 }
 
 const server = http.createServer(async (req, res) => {
@@ -150,9 +157,7 @@ const server = http.createServer(async (req, res) => {
       if (password.length < 6) return sendJson(res, 400, { error: 'Password must be at least 6 characters' });
       if (users.some((item) => item.email === email)) return sendJson(res, 409, { error: 'Email already registered' });
 
-      const baseName = nameInput.isNotEmpty
-        ? nameInput
-        : email.split('@')[0].replace(/[._-]+/g, ' ');
+      const baseName = nameInput.isNotEmpty ? nameInput : email.split('@')[0].replace(/[._-]+/g, ' ');
 
       const user = {
         id: `u${users.length + 1}`,
@@ -166,6 +171,12 @@ const server = http.createServer(async (req, res) => {
     } catch (error) {
       return sendJson(res, 400, { error: error.message });
     }
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/auth/me') {
+    const user = resolveUserFromToken(req);
+    if (!user) return sendJson(res, 401, { error: 'Unauthorized' });
+    return sendJson(res, 200, { data: userPublic(user) });
   }
 
   if (req.method === 'GET' && url.pathname === '/api/feed') return sendJson(res, 200, { data: feedVideos });

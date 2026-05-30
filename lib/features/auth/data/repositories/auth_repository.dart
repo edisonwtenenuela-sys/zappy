@@ -34,6 +34,17 @@ class AuthRepository {
     return _mapAuthResult(json);
   }
 
+  Future<AuthUser> me(String token) async {
+    final json = await _apiClient.getJson(
+      '/api/auth/me',
+      headers: {'Authorization': 'Bearer $token'},
+    );
+
+    final data = json['data'] as Map<String, dynamic>?;
+    if (data == null) throw Exception('User not received');
+    return AuthUser.fromJson(data);
+  }
+
   AuthLoginResult _mapAuthResult(Map<String, dynamic> json) {
     final data = json['data'] as Map<String, dynamic>?;
     final token = data?['token']?.toString();

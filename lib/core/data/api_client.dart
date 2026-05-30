@@ -8,17 +8,21 @@ class ApiClient {
 
   final http.Client _client;
 
-  Future<Map<String, dynamic>> getJson(String path) async {
+  Future<Map<String, dynamic>> getJson(String path, {Map<String, String>? headers}) async {
     final uri = Uri.parse('${ApiConfig.baseUrl}$path');
-    final response = await _client.get(uri);
+    final response = await _client.get(uri, headers: headers);
     return _handleResponse(response);
   }
 
-  Future<Map<String, dynamic>> postJson(String path, Map<String, dynamic> body) async {
+  Future<Map<String, dynamic>> postJson(
+    String path,
+    Map<String, dynamic> body, {
+    Map<String, String>? headers,
+  }) async {
     final uri = Uri.parse('${ApiConfig.baseUrl}$path');
     final response = await _client.post(
       uri,
-      headers: {'Content-Type': 'application/json'},
+      headers: {'Content-Type': 'application/json', ...?headers},
       body: jsonEncode(body),
     );
     return _handleResponse(response);
