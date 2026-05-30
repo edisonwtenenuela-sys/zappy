@@ -27,7 +27,28 @@ class _LoginPageState extends State<LoginPage> {
     super.dispose();
   }
 
-  Future<void> _submit() async {
+  Future<void> _login() async {
+    await _executeAuthAction(() {
+      return _authRepository.login(
+        email: _emailController.text.trim(),
+        password: _passwordController.text,
+      );
+    });
+  }
+
+  Future<void> _register() async {
+    await _executeAuthAction(() {
+      final email = _emailController.text.trim();
+      final suggestedName = email.split('@').first;
+      return _authRepository.register(
+        email: email,
+        password: _passwordController.text,
+        name: suggestedName,
+      );
+    });
+  }
+
+  Future<void> _executeAuthAction(Future<AuthLoginResult> Function() action) async {
     if (!_formKey.currentState!.validate()) return;
 
     setState(() {
@@ -36,10 +57,7 @@ class _LoginPageState extends State<LoginPage> {
     });
 
     try {
-      final result = await _authRepository.login(
-        email: _emailController.text.trim(),
-        password: _passwordController.text,
-      );
+      final result = await action();
       await widget.onLogin(result);
     } catch (e) {
       setState(() => _error = e.toString().replaceFirst('Exception: ', ''));
@@ -82,13 +100,16 @@ class _LoginPageState extends State<LoginPage> {
               ],
               const SizedBox(height: 24),
               ElevatedButton(
-                onPressed: _isLoading ? null : _submit,
+                onPressed: _isLoading ? null : _login,
                 child: _isLoading
                     ? const SizedBox(height: 18, width: 18, child: CircularProgressIndicator(strokeWidth: 2))
                     : Text(t.login),
               ),
               const SizedBox(height: 12),
-              OutlinedButton(onPressed: _isLoading ? null : _submit, child: Text(t.registerMock)),
+              OutlinedButton(
+                onPressed: _isLoading ? null : _register,
+                child: Text(t.registerMock),
+              ),
             ],
           ),
         ),

@@ -3,12 +3,14 @@ const { URL } = require('url');
 
 const PORT = process.env.PORT || 4000;
 
-const demoUser = {
-  id: 'u1',
-  email: 'demo@zappy.app',
-  password: '123456',
-  name: 'Demo User'
-};
+const users = [
+  {
+    id: 'u1',
+    email: 'demo@zappy.app',
+    password: '123456',
+    name: 'Demo User'
+  }
+];
 
 const feedVideos = Array.from({ length: 8 }, (_, index) => ({
   id: `v${index + 1}`,
@@ -87,10 +89,7 @@ function readJsonBody(req) {
       }
     });
     req.on('end', () => {
-      if (!data) {
-        resolve({});
-        return;
-      }
+      if (!data) return resolve({});
       try {
         resolve(JSON.parse(data));
       } catch {
@@ -101,14 +100,21 @@ function readJsonBody(req) {
   });
 }
 
-const server = http.createServer(async (req, res) => {
-  if (!req.url || !req.method) {
-    return sendJson(res, 400, { error: 'Invalid request' });
-  }
+function createAuthPayload(user) {
+  const token = `zappy_token_${user.id}_${Date.now()}`;
+  return {
+    token,
+    user: {
+      id: user.id,
+      email: user.email,
+      name: user.name
+    }
+  };
+}
 
-  if (req.method === 'OPTIONS') {
-    return sendJson(res, 204, {});
-  }
+const server = http.createServer(async (req, res) => {
+  if (!req.url || !req.method) return sendJson(res, 400, { error: 'Invalid request' });
+  if (req.method === 'OPTIONS') return sendJson(res, 204, {});
 
   const url = new URL(req.url, `http://localhost:${PORT}`);
 
@@ -121,38 +127,50 @@ const server = http.createServer(async (req, res) => {
       const body = await readJsonBody(req);
       const email = String(body.email || '').trim().toLowerCase();
       const password = String(body.password || '');
+      const user = users.find((item) => item.email === email);
 
-      if (email !== demoUser.email || password !== demoUser.password) {
+      if (!user || user.password !== password) {
         return sendJson(res, 401, { error: 'Invalid credentials' });
       }
 
-      const token = `zappy_demo_token_${Date.now()}`;
-      return sendJson(res, 200, {
-        data: {
-          token,
-          user: {
-            id: demoUser.id,
-            email: demoUser.email,
-            name: demoUser.name
-          }
-        }
-      });
+      return sendJson(res, 200, { data: createAuthPayload(user) });
     } catch (error) {
       return sendJson(res, 400, { error: error.message });
     }
   }
 
-  if (req.method === 'GET' && url.pathname === '/api/feed') {
-    return sendJson(res, 200, { data: feedVideos });
+  if (req.method === 'POST' && url.pathname === '/api/auth/register') {
+    try {
+      const body = await readJsonBody(req);
+      const email = String(body.email || '').trim().toLowerCase();
+      const password = String(body.password || '');
+      const nameInput = String(body.name || '').trim();
+
+      if (!email.includes('@')) return sendJson(res, 400, { error: 'Invalid email' });
+      if (password.length < 6) return sendJson(res, 400, { error: 'Password must be at least 6 characters' });
+      if (users.some((item) => item.email === email)) return sendJson(res, 409, { error: 'Email already registered' });
+
+      const baseName = nameInput.isNotEmpty
+        ? nameInput
+        : email.split('@')[0].replace(/[._-]+/g, ' ');
+
+      const user = {
+        id: `u${users.length + 1}`,
+        email,
+        password,
+        name: baseName
+      };
+
+      users.push(user);
+      return sendJson(res, 201, { data: createAuthPayload(user) });
+    } catch (error) {
+      return sendJson(res, 400, { error: error.message });
+    }
   }
 
-  if (req.method === 'GET' && url.pathname === '/api/chat/threads') {
-    return sendJson(res, 200, { data: chatThreads });
-  }
-
-  if (req.method === 'GET' && url.pathname === '/api/wallet/summary') {
-    return sendJson(res, 200, { data: walletSummary });
-  }
+  if (req.method === 'GET' && url.pathname === '/api/feed') return sendJson(res, 200, { data: feedVideos });
+  if (req.method === 'GET' && url.pathname === '/api/chat/threads') return sendJson(res, 200, { data: chatThreads });
+  if (req.method === 'GET' && url.pathname === '/api/wallet/summary') return sendJson(res, 200, { data: walletSummary });
 
   return sendJson(res, 404, { error: 'Route not found' });
 });

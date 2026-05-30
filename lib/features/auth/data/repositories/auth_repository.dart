@@ -18,7 +18,23 @@ class AuthRepository {
       'email': email,
       'password': password,
     });
+    return _mapAuthResult(json);
+  }
 
+  Future<AuthLoginResult> register({
+    required String email,
+    required String password,
+    String? name,
+  }) async {
+    final json = await _apiClient.postJson('/api/auth/register', {
+      'email': email,
+      'password': password,
+      if (name != null && name.trim().isNotEmpty) 'name': name.trim(),
+    });
+    return _mapAuthResult(json);
+  }
+
+  AuthLoginResult _mapAuthResult(Map<String, dynamic> json) {
     final data = json['data'] as Map<String, dynamic>?;
     final token = data?['token']?.toString();
     final userMap = data?['user'] as Map<String, dynamic>?;
