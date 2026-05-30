@@ -20,20 +20,27 @@ Server: `http://localhost:4000`
 - `GET /api/chat/threads`
 - `GET /api/wallet/summary`
 
-## Users persistence
+## Auth persistence modes
 
-Registered users are saved in:
+### Default (without DATABASE_URL)
 
-- `backend/data/users.json`
+- Users: `backend/data/users.json`
+- Sessions: memory
 
-This file is loaded on startup and updated on each successful register.
+### PostgreSQL enabled (with DATABASE_URL)
 
-## Session persistence (PostgreSQL)
+- Users: table `auth_users`
+- Sessions: table `auth_sessions`
 
-By default, sessions run in memory. To persist sessions across backend restarts:
+## Enable PostgreSQL mode
 
 1. Copy `.env.example` and set `DATABASE_URL`.
-2. Create the table with `backend/sql/001_auth_sessions.sql`.
+2. Run SQL scripts:
+   - `backend/sql/000_auth_users.sql`
+   - `backend/sql/001_auth_sessions.sql`
 3. Start backend with `DATABASE_URL` set.
 
-When PostgreSQL is active, `/health` returns `"sessionStore": "postgres"`.
+When PostgreSQL is active, `/health` returns:
+
+- `"userStore": "postgres"`
+- `"sessionStore": "postgres"`

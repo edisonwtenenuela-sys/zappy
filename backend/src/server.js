@@ -16,7 +16,6 @@ const USERS_FILE = path.join(__dirname, '..', 'data', 'users.json');
 const SESSION_TTL_DAYS = 7;
 
 let users = [];
-
 const memorySessions = new Map();
 
 class SessionStore {
@@ -65,10 +64,7 @@ class SessionStore {
       return;
     }
 
-    memorySessions.set(token, {
-      userId,
-      expiresAt: expiresAt.toISOString(),
-    });
+    memorySessions.set(token, { userId, expiresAt: expiresAt.toISOString() });
   }
 
   async getUserId(token) {
@@ -105,78 +101,191 @@ class SessionStore {
   }
 }
 
-const sessionStore = new SessionStore();
+class UserStore {
+  constructor(sessionStore) {
+    this.sessionStore = sessionStore;
+    this.mode = 'json';
+    this.users = [];
+  }
 
-function ensureUsersFile() {
-  const defaultUsers = [
-    {
-      id: 'u1',
-      email: 'demo@zappy.app',
-      passwordHash: null,
-      passwordSalt: null,
-      password: '123456',
-      name: 'Demo User'
+  async init() {
+    if (this.sessionStore.mode === 'postgres') {
+      await this.#initPostgres();
+      this.mode = 'postgres';
+      return;
     }
-  ];
 
-  const dir = path.dirname(USERS_FILE);
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
+    this.#loadFromJson();
+    this.mode = 'json';
   }
 
-  if (!fs.existsSync(USERS_FILE)) {
-    fs.writeFileSync(USERS_FILE, JSON.stringify(defaultUsers, null, 2), 'utf8');
+  async #initPostgres() {
+    const pool = this.sessionStore.pool;
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS auth_users (
+        id TEXT PRIMARY KEY,
+        email TEXT NOT NULL UNIQUE,
+        password_hash TEXT NOT NULL,
+        password_salt TEXT NOT NULL,
+        name TEXT NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+    `);
+
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS idx_auth_users_email
+      ON auth_users (email);
+    `);
+
+    const countResult = await pool.query('SELECT COUNT(*)::int AS count FROM auth_users');
+    const count = countResult.rows[0]?.count ?? 0;
+    if (count > 0) return;
+
+    const jsonUsers = this.#loadJsonUsersOnly();
+    for (const user of jsonUsers) {
+      await pool.query(
+        `INSERT INTO auth_users(id, email, password_hash, password_salt, name)
+         VALUES ($1, $2, $3, $4, $5)
+         ON CONFLICT (email) DO NOTHING`,
+        [user.id, user.email, user.passwordHash, user.passwordSalt, user.name]
+      );
+    }
   }
-}
 
-function hashPassword(password, salt) {
-  return crypto.scryptSync(password, salt, 64).toString('hex');
-}
+  #ensureUsersFile() {
+    const defaultUsers = [
+      {
+        id: 'u1',
+        email: 'demo@zappy.app',
+        passwordHash: null,
+        passwordSalt: null,
+        password: '123456',
+        name: 'Demo User'
+      }
+    ];
 
-function normalizeUser(user) {
-  const normalized = {
-    id: user.id,
-    email: String(user.email || '').trim().toLowerCase(),
-    name: user.name,
-    passwordHash: user.passwordHash ?? null,
-    passwordSalt: user.passwordSalt ?? null,
-    password: user.password ?? null
-  };
+    const dir = path.dirname(USERS_FILE);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    if (!fs.existsSync(USERS_FILE)) {
+      fs.writeFileSync(USERS_FILE, JSON.stringify(defaultUsers, null, 2), 'utf8');
+    }
+  }
 
-  if ((!normalized.passwordHash || !normalized.passwordSalt) && normalized.password) {
+  #hashPassword(password, salt) {
+    return crypto.scryptSync(password, salt, 64).toString('hex');
+  }
+
+  #normalizeUser(user) {
+    const normalized = {
+      id: user.id,
+      email: String(user.email || '').trim().toLowerCase(),
+      name: user.name,
+      passwordHash: user.passwordHash ?? null,
+      passwordSalt: user.passwordSalt ?? null,
+      password: user.password ?? null
+    };
+
+    if ((!normalized.passwordHash || !normalized.passwordSalt) && normalized.password) {
+      const salt = crypto.randomBytes(16).toString('hex');
+      const passwordHash = this.#hashPassword(normalized.password, salt);
+      normalized.passwordSalt = salt;
+      normalized.passwordHash = passwordHash;
+      normalized.password = null;
+    }
+
+    return normalized;
+  }
+
+  #loadJsonUsersOnly() {
+    this.#ensureUsersFile();
+    const raw = fs.readFileSync(USERS_FILE, 'utf8');
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) throw new Error('users.json must contain an array');
+    return parsed.map((item) => this.#normalizeUser(item));
+  }
+
+  #loadFromJson() {
+    this.users = this.#loadJsonUsersOnly();
+    this.#saveJsonUsers();
+  }
+
+  #saveJsonUsers() {
+    fs.writeFileSync(USERS_FILE, JSON.stringify(this.users, null, 2), 'utf8');
+  }
+
+  verifyPassword(user, plainPassword) {
+    if (!user.passwordHash || !user.passwordSalt) return false;
+    const incomingHash = this.#hashPassword(plainPassword, user.passwordSalt);
+    return crypto.timingSafeEqual(Buffer.from(incomingHash, 'hex'), Buffer.from(user.passwordHash, 'hex'));
+  }
+
+  async findByEmail(email) {
+    if (this.mode === 'postgres') {
+      const result = await this.sessionStore.pool.query(
+        `SELECT id, email, password_hash AS "passwordHash", password_salt AS "passwordSalt", name
+         FROM auth_users
+         WHERE email = $1
+         LIMIT 1`,
+        [email]
+      );
+      return result.rows[0] || null;
+    }
+
+    return this.users.find((item) => item.email === email) || null;
+  }
+
+  async findById(id) {
+    if (this.mode === 'postgres') {
+      const result = await this.sessionStore.pool.query(
+        `SELECT id, email, password_hash AS "passwordHash", password_salt AS "passwordSalt", name
+         FROM auth_users
+         WHERE id = $1
+         LIMIT 1`,
+        [id]
+      );
+      return result.rows[0] || null;
+    }
+
+    return this.users.find((item) => item.id === id) || null;
+  }
+
+  async nextId() {
+    if (this.mode === 'postgres') {
+      const result = await this.sessionStore.pool.query(
+        `SELECT COALESCE(MAX(NULLIF(regexp_replace(id, '[^0-9]', '', 'g'), '')::int), 0) + 1 AS next_num
+         FROM auth_users`
+      );
+      return `u${result.rows[0]?.next_num ?? 1}`;
+    }
+
+    return `u${this.users.length + 1}`;
+  }
+
+  async createUser({ email, password, name }) {
+    const id = await this.nextId();
     const salt = crypto.randomBytes(16).toString('hex');
-    const passwordHash = hashPassword(normalized.password, salt);
-    normalized.passwordSalt = salt;
-    normalized.passwordHash = passwordHash;
-    normalized.password = null;
+    const passwordHash = this.#hashPassword(password, salt);
+
+    const user = { id, email, passwordHash, passwordSalt: salt, name };
+
+    if (this.mode === 'postgres') {
+      await this.sessionStore.pool.query(
+        `INSERT INTO auth_users(id, email, password_hash, password_salt, name)
+         VALUES ($1, $2, $3, $4, $5)`,
+        [id, email, passwordHash, salt, name]
+      );
+      return user;
+    }
+
+    this.users.push({ ...user, password: null });
+    this.#saveJsonUsers();
+    return user;
   }
-
-  return normalized;
 }
 
-function loadUsers() {
-  ensureUsersFile();
-  const raw = fs.readFileSync(USERS_FILE, 'utf8');
-  const parsed = JSON.parse(raw);
-  if (!Array.isArray(parsed)) {
-    throw new Error('users.json must contain an array');
-  }
-
-  users = parsed.map(normalizeUser);
-  saveUsers();
-}
-
-function saveUsers() {
-  fs.writeFileSync(USERS_FILE, JSON.stringify(users, null, 2), 'utf8');
-}
-
-function verifyPassword(user, plainPassword) {
-  if (!user.passwordHash || !user.passwordSalt) {
-    return false;
-  }
-  const incomingHash = hashPassword(plainPassword, user.passwordSalt);
-  return crypto.timingSafeEqual(Buffer.from(incomingHash, 'hex'), Buffer.from(user.passwordHash, 'hex'));
-}
+const sessionStore = new SessionStore();
+const userStore = new UserStore(sessionStore);
 
 const feedVideos = Array.from({ length: 8 }, (_, index) => ({
   id: `v${index + 1}`,
@@ -283,7 +392,7 @@ async function resolveUserFromToken(req) {
   const userId = await sessionStore.getUserId(token);
   if (!userId) return null;
 
-  return users.find((u) => u.id === userId) || null;
+  return userStore.findById(userId);
 }
 
 const server = http.createServer(async (req, res) => {
@@ -296,6 +405,7 @@ const server = http.createServer(async (req, res) => {
     return sendJson(res, 200, {
       status: 'ok',
       service: 'zappy-backend',
+      userStore: userStore.mode,
       sessionStore: sessionStore.mode,
       time: new Date().toISOString(),
     });
@@ -306,9 +416,9 @@ const server = http.createServer(async (req, res) => {
       const body = await readJsonBody(req);
       const email = String(body.email || '').trim().toLowerCase();
       const password = String(body.password || '');
-      const user = users.find((item) => item.email === email);
+      const user = await userStore.findByEmail(email);
 
-      if (!user || !verifyPassword(user, password)) {
+      if (!user || !userStore.verifyPassword(user, password)) {
         return sendJson(res, 401, { error: 'Invalid credentials' });
       }
 
@@ -327,23 +437,12 @@ const server = http.createServer(async (req, res) => {
 
       if (!email.includes('@')) return sendJson(res, 400, { error: 'Invalid email' });
       if (password.length < 6) return sendJson(res, 400, { error: 'Password must be at least 6 characters' });
-      if (users.some((item) => item.email === email)) return sendJson(res, 409, { error: 'Email already registered' });
+
+      const existing = await userStore.findByEmail(email);
+      if (existing) return sendJson(res, 409, { error: 'Email already registered' });
 
       const baseName = nameInput.isNotEmpty ? nameInput : email.split('@')[0].replace(/[._-]+/g, ' ');
-      const salt = crypto.randomBytes(16).toString('hex');
-      const passwordHash = hashPassword(password, salt);
-
-      const user = {
-        id: `u${users.length + 1}`,
-        email,
-        passwordHash,
-        passwordSalt: salt,
-        password: null,
-        name: baseName
-      };
-
-      users.push(user);
-      saveUsers();
+      const user = await userStore.createUser({ email, password, name: baseName });
 
       return sendJson(res, 201, { data: await createAuthPayload(user) });
     } catch (error) {
@@ -356,7 +455,7 @@ const server = http.createServer(async (req, res) => {
       const user = await resolveUserFromToken(req);
       if (!user) return sendJson(res, 401, { error: 'Unauthorized' });
       return sendJson(res, 200, { data: userPublic(user) });
-    } catch (error) {
+    } catch {
       return sendJson(res, 401, { error: 'Unauthorized' });
     }
   }
@@ -370,17 +469,11 @@ const server = http.createServer(async (req, res) => {
 
 async function start() {
   try {
-    loadUsers();
-  } catch (error) {
-    console.error('Failed to load users file:', error.message);
-    process.exit(1);
-  }
-
-  try {
     await sessionStore.init();
     await sessionStore.cleanupExpired();
+    await userStore.init();
   } catch (error) {
-    console.error('Failed to initialize session store:', error.message);
+    console.error('Failed to initialize stores:', error.message);
     process.exit(1);
   }
 
@@ -388,6 +481,7 @@ async function start() {
     console.log(`Zappy backend running on http://localhost:${PORT}`);
     console.log('Demo login: demo@zappy.app / 123456');
     console.log(`Users file: ${USERS_FILE}`);
+    console.log(`User store mode: ${userStore.mode}`);
     console.log(`Session store mode: ${sessionStore.mode}`);
   });
 }
