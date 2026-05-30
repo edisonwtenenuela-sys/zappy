@@ -6,18 +6,25 @@ import 'package:zappy/features/auth/domain/auth_user.dart';
 class AuthLocalDataSource {
   static const _isLoggedInKey = 'is_logged_in';
   static const _authTokenKey = 'auth_token';
+  static const _refreshTokenKey = 'refresh_token';
   static const _authUserKey = 'auth_user';
 
   Future<bool> isLoggedIn() async {
     final prefs = await SharedPreferences.getInstance();
     final token = prefs.getString(_authTokenKey);
+    final refreshToken = prefs.getString(_refreshTokenKey);
     final loggedIn = prefs.getBool(_isLoggedInKey) ?? false;
-    return loggedIn && token != null && token.isNotEmpty;
+    return loggedIn && token != null && token.isNotEmpty && refreshToken != null && refreshToken.isNotEmpty;
   }
 
-  Future<void> saveSession({required String token, required AuthUser user}) async {
+  Future<void> saveSession({
+    required String token,
+    required String refreshToken,
+    required AuthUser user,
+  }) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_authTokenKey, token);
+    await prefs.setString(_refreshTokenKey, refreshToken);
     await prefs.setString(_authUserKey, jsonEncode(user.toStorageMap()));
     await prefs.setBool(_isLoggedInKey, true);
   }
@@ -25,6 +32,11 @@ class AuthLocalDataSource {
   Future<String?> getToken() async {
     final prefs = await SharedPreferences.getInstance();
     return prefs.getString(_authTokenKey);
+  }
+
+  Future<String?> getRefreshToken() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString(_refreshTokenKey);
   }
 
   Future<AuthUser?> getUser() async {
@@ -40,6 +52,7 @@ class AuthLocalDataSource {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(_isLoggedInKey, false);
     await prefs.remove(_authTokenKey);
+    await prefs.remove(_refreshTokenKey);
     await prefs.remove(_authUserKey);
   }
 }

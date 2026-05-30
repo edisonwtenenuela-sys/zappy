@@ -13,10 +13,12 @@ try {
 
 const PORT = process.env.PORT || 4000;
 const USERS_FILE = path.join(__dirname, '..', 'data', 'users.json');
-const SESSION_TTL_DAYS = 7;
+const ACCESS_TTL_HOURS = 12;
+const REFRESH_TTL_DAYS = 30;
 
 let users = [];
-const memorySessions = new Map();
+const memoryAccessSessions = new Map();
+const memoryRefreshSessions = new Map();
 
 class SessionStore {
   constructor() {
@@ -52,10 +54,29 @@ class SessionStore {
       ON auth_sessions (expires_at);
     `);
 
+    await this.pool.query(`
+      CREATE TABLE IF NOT EXISTS auth_refresh_tokens (
+        token TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        expires_at TIMESTAMPTZ NOT NULL
+      );
+    `);
+
+    await this.pool.query(`
+      CREATE INDEX IF NOT EXISTS idx_auth_refresh_user_id
+      ON auth_refresh_tokens (user_id);
+    `);
+
+    await this.pool.query(`
+      CREATE INDEX IF NOT EXISTS idx_auth_refresh_expires_at
+      ON auth_refresh_tokens (expires_at);
+    `);
+
     this.mode = 'postgres';
   }
 
-  async createSession(token, userId, expiresAt) {
+  async createAccessSession(token, userId, expiresAt) {
     if (this.mode === 'postgres') {
       await this.pool.query(
         'INSERT INTO auth_sessions(token, user_id, expires_at) VALUES ($1, $2, $3)',
@@ -64,10 +85,22 @@ class SessionStore {
       return;
     }
 
-    memorySessions.set(token, { userId, expiresAt: expiresAt.toISOString() });
+    memoryAccessSessions.set(token, { userId, expiresAt: expiresAt.toISOString() });
   }
 
-  async getUserId(token) {
+  async createRefreshSession(token, userId, expiresAt) {
+    if (this.mode === 'postgres') {
+      await this.pool.query(
+        'INSERT INTO auth_refresh_tokens(token, user_id, expires_at) VALUES ($1, $2, $3)',
+        [token, userId, expiresAt.toISOString()]
+      );
+      return;
+    }
+
+    memoryRefreshSessions.set(token, { userId, expiresAt: expiresAt.toISOString() });
+  }
+
+  async getAccessUserId(token) {
     if (this.mode === 'postgres') {
       const result = await this.pool.query(
         'SELECT user_id FROM auth_sessions WHERE token = $1 AND expires_at > NOW() LIMIT 1',
@@ -76,18 +109,34 @@ class SessionStore {
       return result.rows[0]?.user_id || null;
     }
 
-    const session = memorySessions.get(token);
+    const session = memoryAccessSessions.get(token);
     if (!session) return null;
-
     if (new Date(session.expiresAt).getTime() <= Date.now()) {
-      memorySessions.delete(token);
+      memoryAccessSessions.delete(token);
       return null;
     }
-
     return session.userId;
   }
 
-  async revokeSession(token) {
+  async getRefreshUserId(token) {
+    if (this.mode === 'postgres') {
+      const result = await this.pool.query(
+        'SELECT user_id FROM auth_refresh_tokens WHERE token = $1 AND expires_at > NOW() LIMIT 1',
+        [token]
+      );
+      return result.rows[0]?.user_id || null;
+    }
+
+    const session = memoryRefreshSessions.get(token);
+    if (!session) return null;
+    if (new Date(session.expiresAt).getTime() <= Date.now()) {
+      memoryRefreshSessions.delete(token);
+      return null;
+    }
+    return session.userId;
+  }
+
+  async revokeAccessSession(token) {
     if (!token) return;
 
     if (this.mode === 'postgres') {
@@ -95,18 +144,36 @@ class SessionStore {
       return;
     }
 
-    memorySessions.delete(token);
+    memoryAccessSessions.delete(token);
+  }
+
+  async revokeRefreshSession(token) {
+    if (!token) return;
+
+    if (this.mode === 'postgres') {
+      await this.pool.query('DELETE FROM auth_refresh_tokens WHERE token = $1', [token]);
+      return;
+    }
+
+    memoryRefreshSessions.delete(token);
   }
 
   async cleanupExpired() {
     if (this.mode === 'postgres') {
       await this.pool.query('DELETE FROM auth_sessions WHERE expires_at <= NOW()');
+      await this.pool.query('DELETE FROM auth_refresh_tokens WHERE expires_at <= NOW()');
       return;
     }
 
-    for (const [token, session] of memorySessions.entries()) {
+    for (const [token, session] of memoryAccessSessions.entries()) {
       if (new Date(session.expiresAt).getTime() <= Date.now()) {
-        memorySessions.delete(token);
+        memoryAccessSessions.delete(token);
+      }
+    }
+
+    for (const [token, session] of memoryRefreshSessions.entries()) {
+      if (new Date(session.expiresAt).getTime() <= Date.now()) {
+        memoryRefreshSessions.delete(token);
       }
     }
   }
@@ -387,7 +454,7 @@ function readJsonBody(req) {
 function extractBearerToken(req) {
   const auth = req.headers.authorization || '';
   if (!auth.startsWith('Bearer ')) return null;
-  return auth.slice(7).trim();
+  return auth.slice('Bearer '.length).trim();
 }
 
 function userPublic(user) {
@@ -395,17 +462,27 @@ function userPublic(user) {
 }
 
 async function createAuthPayload(user) {
-  const token = crypto.randomBytes(32).toString('hex');
-  const expiresAt = new Date(Date.now() + SESSION_TTL_DAYS * 24 * 60 * 60 * 1000);
-  await sessionStore.createSession(token, user.id, expiresAt);
-  return { token, user: userPublic(user) };
+  const accessToken = crypto.randomBytes(32).toString('hex');
+  const refreshToken = crypto.randomBytes(32).toString('hex');
+
+  const accessExpiresAt = new Date(Date.now() + ACCESS_TTL_HOURS * 60 * 60 * 1000);
+  const refreshExpiresAt = new Date(Date.now() + REFRESH_TTL_DAYS * 24 * 60 * 60 * 1000);
+
+  await sessionStore.createAccessSession(accessToken, user.id, accessExpiresAt);
+  await sessionStore.createRefreshSession(refreshToken, user.id, refreshExpiresAt);
+
+  return {
+    token: accessToken,
+    refreshToken,
+    user: userPublic(user),
+  };
 }
 
 async function resolveUserFromToken(req) {
   const token = extractBearerToken(req);
   if (!token) return null;
 
-  const userId = await sessionStore.getUserId(token);
+  const userId = await sessionStore.getAccessUserId(token);
   if (!userId) return null;
 
   return userStore.findById(userId);
@@ -466,12 +543,35 @@ const server = http.createServer(async (req, res) => {
     }
   }
 
+  if (req.method === 'POST' && url.pathname === '/api/auth/refresh') {
+    try {
+      const body = await readJsonBody(req);
+      const refreshToken = String(body.refreshToken || '').trim();
+      if (!refreshToken) return sendJson(res, 400, { error: 'Missing refresh token' });
+
+      const userId = await sessionStore.getRefreshUserId(refreshToken);
+      if (!userId) return sendJson(res, 401, { error: 'Invalid refresh token' });
+
+      await sessionStore.revokeRefreshSession(refreshToken);
+
+      const user = await userStore.findById(userId);
+      if (!user) return sendJson(res, 401, { error: 'Unauthorized' });
+
+      return sendJson(res, 200, { data: await createAuthPayload(user) });
+    } catch (error) {
+      return sendJson(res, 400, { error: error.message });
+    }
+  }
+
   if (req.method === 'POST' && url.pathname === '/api/auth/logout') {
     try {
-      const token = extractBearerToken(req);
-      if (token) {
-        await sessionStore.revokeSession(token);
-      }
+      const accessToken = extractBearerToken(req);
+      const body = await readJsonBody(req);
+      const refreshToken = String(body.refreshToken || '').trim();
+
+      if (accessToken) await sessionStore.revokeAccessSession(accessToken);
+      if (refreshToken) await sessionStore.revokeRefreshSession(refreshToken);
+
       return sendJson(res, 200, { data: { success: true } });
     } catch {
       return sendJson(res, 200, { data: { success: true } });

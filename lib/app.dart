@@ -41,17 +41,31 @@ class _ZappyAppState extends State<ZappyApp> {
     if (!loggedIn) return false;
 
     final token = await _authLocal.getToken();
-    if (token == null || token.isEmpty) return false;
+    final refreshToken = await _authLocal.getRefreshToken();
+    if (token == null || token.isEmpty || refreshToken == null || refreshToken.isEmpty) {
+      return false;
+    }
 
     try {
       final user = await _authRepository.me(token);
-      await _authLocal.saveSession(token: token, user: user);
+      await _authLocal.saveSession(token: token, refreshToken: refreshToken, user: user);
       if (mounted) setState(() => _currentUser = user);
       return true;
     } catch (_) {
-      await _authLocal.logout();
-      if (mounted) setState(() => _currentUser = null);
-      return false;
+      try {
+        final refreshed = await _authRepository.refresh(refreshToken);
+        await _authLocal.saveSession(
+          token: refreshed.token,
+          refreshToken: refreshed.refreshToken,
+          user: refreshed.user,
+        );
+        if (mounted) setState(() => _currentUser = refreshed.user);
+        return true;
+      } catch (_) {
+        await _authLocal.logout();
+        if (mounted) setState(() => _currentUser = null);
+        return false;
+      }
     }
   }
 
@@ -61,7 +75,11 @@ class _ZappyAppState extends State<ZappyApp> {
   }
 
   Future<void> _handleLogin(AuthLoginResult result) async {
-    await _authLocal.saveSession(token: result.token, user: result.user);
+    await _authLocal.saveSession(
+      token: result.token,
+      refreshToken: result.refreshToken,
+      user: result.user,
+    );
     if (mounted) {
       setState(() {
         _currentUser = result.user;
@@ -72,9 +90,11 @@ class _ZappyAppState extends State<ZappyApp> {
 
   Future<void> _handleLogout() async {
     final token = await _authLocal.getToken();
-    if (token != null && token.isNotEmpty) {
+    final refreshToken = await _authLocal.getRefreshToken();
+
+    if (token != null && token.isNotEmpty && refreshToken != null && refreshToken.isNotEmpty) {
       try {
-        await _authRepository.logout(token);
+        await _authRepository.logout(token: token, refreshToken: refreshToken);
       } catch (_) {
         // Keep local logout regardless of network/backend state.
       }

@@ -15,8 +15,9 @@ Server: `http://localhost:4000`
 - `GET /health`
 - `POST /api/auth/login`
 - `POST /api/auth/register`
-- `POST /api/auth/logout` (Bearer token)
-- `GET /api/auth/me` (Bearer token)
+- `POST /api/auth/refresh`
+- `POST /api/auth/logout` (Bearer access token + refresh token in body)
+- `GET /api/auth/me` (Bearer access token)
 - `GET /api/feed`
 - `GET /api/chat/threads`
 - `GET /api/wallet/summary`
@@ -26,12 +27,14 @@ Server: `http://localhost:4000`
 ### Default (without DATABASE_URL)
 
 - Users: `backend/data/users.json`
-- Sessions: memory
+- Access sessions: memory
+- Refresh sessions: memory
 
 ### PostgreSQL enabled (with DATABASE_URL)
 
 - Users: table `auth_users`
-- Sessions: table `auth_sessions`
+- Access sessions: table `auth_sessions`
+- Refresh sessions: table `auth_refresh_tokens`
 
 ## Enable PostgreSQL mode
 
@@ -39,6 +42,7 @@ Server: `http://localhost:4000`
 2. Run SQL scripts:
    - `backend/sql/000_auth_users.sql`
    - `backend/sql/001_auth_sessions.sql`
+   - `backend/sql/002_auth_refresh_tokens.sql`
 3. Start backend with `DATABASE_URL` set.
 
 When PostgreSQL is active, `/health` returns:
