@@ -22,6 +22,14 @@ Server: `http://localhost:4000`
 - `GET /api/chat/threads`
 - `GET /api/wallet/summary`
 
+## Auth abuse protection
+
+Login, register, and refresh requests are rate-limited in memory.
+
+- Window: 15 minutes
+- Limit: 10 attempts
+- Scope: client IP plus email or refresh token fingerprint
+
 ## Auth persistence modes
 
 ### Default (without DATABASE_URL)

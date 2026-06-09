@@ -15,10 +15,53 @@ const PORT = process.env.PORT || 4000;
 const USERS_FILE = path.join(__dirname, '..', 'data', 'users.json');
 const ACCESS_TTL_HOURS = 12;
 const REFRESH_TTL_DAYS = 30;
+const AUTH_RATE_LIMIT_WINDOW_MS = 15 * 60 * 1000;
+const AUTH_RATE_LIMIT_MAX_ATTEMPTS = 10;
 
 let users = [];
 const memoryAccessSessions = new Map();
 const memoryRefreshSessions = new Map();
+const authRateLimitBuckets = new Map();
+
+class RateLimiter {
+  constructor({ windowMs, maxAttempts }) {
+    this.windowMs = windowMs;
+    this.maxAttempts = maxAttempts;
+    this.buckets = authRateLimitBuckets;
+  }
+
+  consume(key) {
+    const now = Date.now();
+    const bucket = this.buckets.get(key);
+
+    if (!bucket || bucket.resetAt <= now) {
+      this.buckets.set(key, {
+        count: 1,
+        resetAt: now + this.windowMs,
+      });
+      return { allowed: true, retryAfterSeconds: 0 };
+    }
+
+    if (bucket.count >= this.maxAttempts) {
+      return {
+        allowed: false,
+        retryAfterSeconds: Math.ceil((bucket.resetAt - now) / 1000),
+      };
+    }
+
+    bucket.count += 1;
+    return { allowed: true, retryAfterSeconds: 0 };
+  }
+
+  cleanupExpired() {
+    const now = Date.now();
+    for (const [key, bucket] of this.buckets.entries()) {
+      if (bucket.resetAt <= now) {
+        this.buckets.delete(key);
+      }
+    }
+  }
+}
 
 class SessionStore {
   constructor() {
@@ -364,6 +407,10 @@ class UserStore {
 
 const sessionStore = new SessionStore();
 const userStore = new UserStore(sessionStore);
+const authRateLimiter = new RateLimiter({
+  windowMs: AUTH_RATE_LIMIT_WINDOW_MS,
+  maxAttempts: AUTH_RATE_LIMIT_MAX_ATTEMPTS,
+});
 
 const feedVideos = Array.from({ length: 8 }, (_, index) => ({
   id: `v${index + 1}`,
@@ -451,6 +498,38 @@ function readJsonBody(req) {
   });
 }
 
+function getClientIp(req) {
+  const forwardedFor = req.headers['x-forwarded-for'];
+  if (typeof forwardedFor === 'string' && forwardedFor.trim()) {
+    return forwardedFor.split(',')[0].trim();
+  }
+
+  return req.socket.remoteAddress || 'unknown';
+}
+
+function enforceAuthRateLimit(req, res, scopes) {
+  const clientIp = getClientIp(req);
+  const keys = [`ip:${clientIp}`, ...scopes];
+
+  for (const key of keys) {
+    const result = authRateLimiter.consume(key);
+    if (result.allowed) continue;
+
+    sendJson(res, 429, {
+      error: 'Too many attempts. Try again later.',
+      retryAfterSeconds: result.retryAfterSeconds,
+    });
+    return false;
+  }
+
+  return true;
+}
+
+function rateLimitTokenScope(prefix, token) {
+  const digest = crypto.createHash('sha256').update(token).digest('hex');
+  return `${prefix}:${digest}`;
+}
+
 function extractBearerToken(req) {
   const auth = req.headers.authorization || '';
   if (!auth.startsWith('Bearer ')) return null;
@@ -509,6 +588,8 @@ const server = http.createServer(async (req, res) => {
       const body = await readJsonBody(req);
       const email = String(body.email || '').trim().toLowerCase();
       const password = String(body.password || '');
+      if (!enforceAuthRateLimit(req, res, [`login:email:${email}`])) return;
+
       const user = await userStore.findByEmail(email);
 
       if (!user || !userStore.verifyPassword(user, password)) {
@@ -527,6 +608,7 @@ const server = http.createServer(async (req, res) => {
       const email = String(body.email || '').trim().toLowerCase();
       const password = String(body.password || '');
       const nameInput = String(body.name || '').trim();
+      if (!enforceAuthRateLimit(req, res, [`register:email:${email}`])) return;
 
       if (!email.includes('@')) return sendJson(res, 400, { error: 'Invalid email' });
       if (password.length < 6) return sendJson(res, 400, { error: 'Password must be at least 6 characters' });
@@ -548,6 +630,7 @@ const server = http.createServer(async (req, res) => {
       const body = await readJsonBody(req);
       const refreshToken = String(body.refreshToken || '').trim();
       if (!refreshToken) return sendJson(res, 400, { error: 'Missing refresh token' });
+      if (!enforceAuthRateLimit(req, res, [rateLimitTokenScope('refresh:token', refreshToken)])) return;
 
       const userId = await sessionStore.getRefreshUserId(refreshToken);
       if (!userId) return sendJson(res, 401, { error: 'Invalid refresh token' });
@@ -600,10 +683,15 @@ async function start() {
     await sessionStore.init();
     await sessionStore.cleanupExpired();
     await userStore.init();
+    authRateLimiter.cleanupExpired();
   } catch (error) {
     console.error('Failed to initialize stores:', error.message);
     process.exit(1);
   }
+
+  setInterval(() => {
+    authRateLimiter.cleanupExpired();
+  }, AUTH_RATE_LIMIT_WINDOW_MS);
 
   server.listen(PORT, () => {
     console.log(`Zappy backend running on http://localhost:${PORT}`);
